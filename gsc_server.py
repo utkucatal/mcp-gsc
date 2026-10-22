@@ -103,7 +103,10 @@ if _raw_data_state not in ("all", "final"):
     )
 DATA_STATE = _raw_data_state
 
-SCOPES = ["https://www.googleapis.com/auth/webmasters"]
+# Read-only fork: the token can only read Search Console data. Write tools
+# (add/delete site, submit/delete sitemap) are removed from this server, and
+# Google rejects any write call made with this scope.
+SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
 def get_gsc_service():
     """
