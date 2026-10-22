@@ -23,6 +23,7 @@ if sys.version_info < (3, 11):
 from platformdirs import user_config_dir
 
 import google.auth
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
@@ -172,9 +173,31 @@ def get_gsc_service():
         f"absolute paths."
     )
 
+def _save_token(creds) -> None:
+    """Write the token readable by the owner only."""
+    with open(TOKEN_FILE, 'w') as token:
+        token.write(creds.to_json())
+    os.chmod(TOKEN_FILE, 0o600)
+
+
+def _set_token_aside(reason: str) -> None:
+    """Move a token that cannot be used any more next to TOKEN_FILE instead of deleting it.
+
+    TOKEN_FILE can point at a file other tools use too (GSC_CONFIG_DIR), so it is never removed.
+    """
+    if os.path.exists(TOKEN_FILE):
+        aside = f"{TOKEN_FILE}.{reason}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        os.replace(TOKEN_FILE, aside)
+        logging.warning("Token file moved to %s (%s); a new sign-in is needed.", aside, reason)
+
+
 def get_gsc_service_oauth():
     """
     Returns an authorized Search Console service object using OAuth.
+
+    The token file is only set aside when it is unreadable or Google says the grant was
+    revoked or expired (invalid_grant). Network errors and configuration errors such as
+    invalid_scope leave it in place and are raised, because a new sign-in would not help.
     """
     creds = None
     
@@ -182,10 +205,9 @@ def get_gsc_service_oauth():
     if os.path.exists(TOKEN_FILE):
         try:
             creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
-        except Exception as e:
-            # If token file is corrupted, delete it
-            if os.path.exists(TOKEN_FILE):
-                os.remove(TOKEN_FILE)
+        except ValueError:
+            # Not a usable token file (broken JSON or missing fields)
+            _set_token_aside('unreadable')
             creds = None
     
     # If credentials don't exist or are invalid, get new ones
@@ -193,13 +215,11 @@ def get_gsc_service_oauth():
         if creds and creds.expired and creds.refresh_token:
             try:
                 creds.refresh(Request())
-                # Save the refreshed credentials
-                with open(TOKEN_FILE, 'w') as token:
-                    token.write(creds.to_json())
-            except Exception as e:
-                # If refresh fails, delete the bad token and trigger new OAuth flow
-                if os.path.exists(TOKEN_FILE):
-                    os.remove(TOKEN_FILE)
+                _save_token(creds)
+            except RefreshError as e:
+                if 'invalid_grant' not in str(e):
+                    raise  # for example invalid_scope: the token is fine, the configuration is not
+                _set_token_aside('revoked')
                 # Fall through to the OAuth flow below
                 creds = None
         
@@ -217,8 +237,7 @@ def get_gsc_service_oauth():
             creds = flow.run_local_server(port=0)
             
             # Save the credentials for future use
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
+            _save_token(creds)
     
     # Build and return the service
     return build("searchconsole", "v1", credentials=creds, cache_discovery=False)
@@ -1518,8 +1537,7 @@ async def reauthenticate() -> str:
         creds = flow.run_local_server(port=0)
 
         # Save the new credentials for future use
-        with open(TOKEN_FILE, "w") as token:
-            token.write(creds.to_json())
+        _save_token(creds)
 
         msg = "Successfully authenticated with a new Google account."
         if token_deleted:

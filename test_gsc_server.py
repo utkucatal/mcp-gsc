@@ -154,6 +154,83 @@ class TestAuth(unittest.TestCase):
                 with self.assertRaises((RuntimeError, FileNotFoundError)):
                     mod.get_gsc_service_oauth()
 
+    def _expired_creds(self, refresh_error):
+        mock_creds = MagicMock()
+        mock_creds.valid = False
+        mock_creds.expired = True
+        mock_creds.refresh_token = "refresh_token"
+        mock_creds.refresh.side_effect = refresh_error
+        return mock_creds
+
+    def _load_with_token(self, tmpdir):
+        env = {"GSC_SKIP_OAUTH": "false", "GSC_DATA_STATE": "all", "GSC_CONFIG_DIR": tmpdir}
+        with patch.dict(os.environ, env, clear=False):
+            if "gsc_server" in sys.modules:
+                del sys.modules["gsc_server"]
+            import gsc_server as mod
+        token = os.path.join(tmpdir, "token.json")
+        with open(token, "w") as f:
+            f.write('{"refresh_token": "keep me"}')
+        return mod, token
+
+    def test_refresh_network_error_keeps_the_token(self):
+        """A failed refresh caused by the network must not delete the token (issue #56)."""
+        from google.auth.exceptions import TransportError
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mod, token = self._load_with_token(tmpdir)
+            creds = self._expired_creds(TransportError("connection reset"))
+            with patch("gsc_server.Credentials.from_authorized_user_file", return_value=creds), \
+                 patch.object(mod, "TOKEN_FILE", token):
+                with self.assertRaises(TransportError):
+                    mod.get_gsc_service_oauth()
+            self.assertEqual(open(token).read(), '{"refresh_token": "keep me"}')
+
+    def test_refresh_invalid_scope_keeps_the_token(self):
+        """invalid_scope is a configuration error: the token stays and the error is raised (issue #56)."""
+        from google.auth.exceptions import RefreshError
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mod, token = self._load_with_token(tmpdir)
+            creds = self._expired_creds(RefreshError("invalid_scope: Bad Request"))
+            with patch("gsc_server.Credentials.from_authorized_user_file", return_value=creds), \
+                 patch.object(mod, "TOKEN_FILE", token):
+                with self.assertRaises(RefreshError):
+                    mod.get_gsc_service_oauth()
+            self.assertTrue(os.path.exists(token))
+
+    def test_revoked_token_is_set_aside_and_a_new_sign_in_starts(self):
+        """invalid_grant moves the token aside (not deleted) and the new token is owner-only."""
+        from google.auth.exceptions import RefreshError
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mod, token = self._load_with_token(tmpdir)
+            secrets = os.path.join(tmpdir, "client_secrets.json")
+            open(secrets, "w").write("{}")
+            creds = self._expired_creds(RefreshError("invalid_grant: Token has been expired or revoked."))
+            new_creds = MagicMock()
+            new_creds.to_json.return_value = '{"token": "new"}'
+            flow = MagicMock()
+            flow.run_local_server.return_value = new_creds
+            with patch("gsc_server.Credentials.from_authorized_user_file", return_value=creds), \
+                 patch("gsc_server.InstalledAppFlow.from_client_secrets_file", return_value=flow), \
+                 patch("gsc_server.build", return_value=MagicMock()), \
+                 patch.object(mod, "TOKEN_FILE", token), \
+                 patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", secrets):
+                mod.get_gsc_service_oauth()
+            aside = [f for f in os.listdir(tmpdir) if f.startswith("token.json.revoked-")]
+            self.assertEqual(len(aside), 1)
+            self.assertEqual(open(os.path.join(tmpdir, aside[0])).read(), '{"refresh_token": "keep me"}')
+            self.assertEqual(open(token).read(), '{"token": "new"}')
+            self.assertEqual(os.stat(token).st_mode & 0o777, 0o600)
+
+    def test_unreadable_token_is_set_aside_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mod, token = self._load_with_token(tmpdir)
+            with patch("gsc_server.Credentials.from_authorized_user_file", side_effect=ValueError("bad")), \
+                 patch.object(mod, "TOKEN_FILE", token), \
+                 patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
+                with self.assertRaises(FileNotFoundError):  # no secrets: cannot start a new sign-in
+                    mod.get_gsc_service_oauth()
+            self.assertEqual(len([f for f in os.listdir(tmpdir) if f.startswith("token.json.unreadable-")]), 1)
+
     def test_no_token_no_secrets_raises_file_not_found(self):
         """With no token file and no secrets file, FileNotFoundError is raised."""
         with tempfile.TemporaryDirectory() as tmpdir:
