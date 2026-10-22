@@ -1514,14 +1514,8 @@ async def reauthenticate() -> str:
     Useful when you need to switch to a different Google account.
     """
     try:
-        # Delete existing token to force re-authentication
-        if os.path.exists(TOKEN_FILE):
-            os.remove(TOKEN_FILE)
-            token_deleted = True
-        else:
-            token_deleted = False
-
-        # Check if OAuth client secrets file exists
+        # Check first: without a client secrets file no new sign-in is possible,
+        # so the current token must not be deleted.
         if not os.path.exists(OAUTH_CLIENT_SECRETS_FILE):
             return (
                 "Error: OAuth client secrets file not found. "
@@ -1529,6 +1523,13 @@ async def reauthenticate() -> str:
                 "Please ensure client_secrets.json is present or set the "
                 "GSC_OAUTH_CLIENT_SECRETS_FILE environment variable."
             )
+
+        # Delete existing token to force re-authentication
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+            token_deleted = True
+        else:
+            token_deleted = False
 
         # Trigger new OAuth flow — opens a browser window on the local machine.
         # run_local_server() works on macOS even from an MCP subprocess because

@@ -1023,10 +1023,15 @@ class TestReauthenticate(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_error_when_no_secrets_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, "token.json")
+            open(token_path, "w").write('{"old": "token"}')
             mod = _load_module()
-            with patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
+            with patch.object(mod, "TOKEN_FILE", token_path), \
+                 patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", os.path.join(tmpdir, "no_secrets.json")):
                 result = await mod.reauthenticate()
-        self.assertIn("Error", result)
+            self.assertIn("Error", result)
+            # Without secrets no new sign-in is possible, so the old token must stay
+            self.assertTrue(os.path.exists(token_path))
 
 
 # ---------------------------------------------------------------------------
