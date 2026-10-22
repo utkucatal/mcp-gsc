@@ -330,7 +330,6 @@ If you see your properties — it's working. If not, ask: **"Call get_capabiliti
 | `GSC_CREDENTIALS_PATH` | Service account only | — | Absolute path to your service account JSON key. Always required when using `uvx`. |
 | `GSC_SKIP_OAUTH` | No | `false` | Set to `"true"` to force service account auth and skip OAuth entirely |
 | `GSC_DATA_STATE` | No | `"all"` | `"all"` matches the GSC dashboard. `"final"` returns only confirmed data (2–3 day lag). |
-| `GSC_ALLOW_DESTRUCTIVE` | No | `false` | Set to `"true"` to enable add/delete site and delete sitemap tools |
 
 ---
 
@@ -417,13 +416,9 @@ The MCP server runs locally on your machine. It only works in the **Claude Deskt
 
 ---
 
-## Safety: Destructive Operations
+## Read-only fork
 
-By default, `add_site`, `delete_site`, and `delete_sitemap` are disabled. To enable them:
-
-```json
-"GSC_ALLOW_DESTRUCTIVE": "true"
-```
+This fork (`readonly` branch) only reads data. The OAuth scope is `webmasters.readonly`, so Google rejects any write made with its token, and the write tools (`add_site`, `delete_site`, `submit_sitemap`, `delete_sitemap`, the submit/delete actions of `manage_sitemaps`) are removed. A token created by the upstream version has the read-write scope; delete it and log in again after switching.
 
 ---
 
