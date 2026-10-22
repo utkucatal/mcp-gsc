@@ -889,49 +889,29 @@ class TestGetSitemapDetails(unittest.IsolatedAsyncioTestCase):
 
 
 # ---------------------------------------------------------------------------
-# TestSafetyGuards
+# TestReadOnly
 # ---------------------------------------------------------------------------
 
-class TestSafetyGuards(unittest.IsolatedAsyncioTestCase):
+class TestReadOnly(unittest.IsolatedAsyncioTestCase):
 
-    async def test_add_site_blocked_by_default(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "false"})
-        result = await mod.add_site("https://newsite.com/")
-        self.assertIn("Safety", result)
+    def test_scope_is_readonly(self):
+        mod = _load_module()
+        self.assertEqual(mod.SCOPES, ["https://www.googleapis.com/auth/webmasters.readonly"])
 
-    async def test_delete_site_blocked_by_default(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "false"})
-        result = await mod.delete_site("https://newsite.com/")
-        self.assertIn("Safety", result)
+    def test_write_tools_are_removed(self):
+        mod = _load_module()
+        for name in ("add_site", "delete_site", "submit_sitemap", "delete_sitemap"):
+            self.assertFalse(hasattr(mod, name), name)
 
-    async def test_delete_sitemap_blocked_by_default(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "false"})
-        result = await mod.delete_sitemap("https://example.com/", "https://example.com/sitemap.xml")
-        self.assertIn("Safety", result)
-
-    async def test_add_site_allowed_when_flag_set(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
+    async def test_manage_sitemaps_rejects_write_actions(self):
+        mod = _load_module()
         service = _make_service()
-        service.sites().add().execute.return_value = {}
         with patch("gsc_server.get_gsc_service", return_value=service):
-            result = await mod.add_site("https://newsite.com/")
-        self.assertNotIn("Safety", result)
-
-    async def test_delete_site_allowed_when_flag_set(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
-        service = _make_service()
-        service.sites().delete().execute.return_value = {}
-        with patch("gsc_server.get_gsc_service", return_value=service):
-            result = await mod.delete_site("https://example.com/")
-        self.assertNotIn("Safety", result)
-
-    async def test_delete_sitemap_allowed_when_flag_set(self):
-        mod = _load_module({"GSC_ALLOW_DESTRUCTIVE": "true"})
-        service = _make_service()
-        service.sitemaps().delete().execute.return_value = {}
-        with patch("gsc_server.get_gsc_service", return_value=service):
-            result = await mod.delete_sitemap("https://example.com/", "https://example.com/sitemap.xml")
-        self.assertNotIn("Safety", result)
+            for action in ("submit", "delete"):
+                result = await mod.manage_sitemaps("https://example.com/", action, "https://example.com/sitemap.xml")
+                self.assertIn("Invalid action", result)
+        service.sitemaps().submit.assert_not_called()
+        service.sitemaps().delete.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
