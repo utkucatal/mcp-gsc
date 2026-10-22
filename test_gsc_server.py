@@ -20,11 +20,15 @@ from unittest.mock import MagicMock, patch, PropertyMock
 # ---------------------------------------------------------------------------
 
 def _load_module(env_overrides: dict | None = None):
-    """Import gsc_server with a fresh environment."""
+    """Import gsc_server with a fresh environment.
+
+    GSC_CONFIG_DIR points at a new temporary folder, so no test can read, change or
+    delete the token in the user's real config directory.
+    """
     env = {
         "GSC_SKIP_OAUTH": "true",          # prevent live OAuth attempts by default
         "GSC_DATA_STATE": "all",
-        "GSC_ALLOW_DESTRUCTIVE": "false",
+        "GSC_CONFIG_DIR": tempfile.mkdtemp(prefix="mcp-gsc-test-"),
         **(env_overrides or {}),
     }
     with patch.dict(os.environ, env, clear=False):
