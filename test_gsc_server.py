@@ -1001,7 +1001,7 @@ class TestReadOnly(unittest.IsolatedAsyncioTestCase):
 
 class TestReauthenticate(unittest.IsolatedAsyncioTestCase):
 
-    async def test_deletes_token_file(self):
+    async def test_replaces_token_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             token_path = os.path.join(tmpdir, "token.json")
             open(token_path, "w").write('{"old": "token"}')
@@ -1022,8 +1022,28 @@ class TestReauthenticate(unittest.IsolatedAsyncioTestCase):
                 result = await mod.reauthenticate()
 
             self.assertIn("Successfully authenticated", result)
-            self.assertIn("Previous session deleted", result)
-            self.assertTrue(os.path.exists(token_path))
+            self.assertIn("Previous session replaced", result)
+            self.assertEqual(open(token_path).read(), '{"token": "new"}')
+
+    async def test_keeps_token_when_sign_in_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            token_path = os.path.join(tmpdir, "token.json")
+            open(token_path, "w").write('{"old": "token"}')
+            secrets_path = os.path.join(tmpdir, "secrets.json")
+            open(secrets_path, "w").write("{}")
+
+            mod = _load_module()
+
+            with patch.object(mod, "TOKEN_FILE", token_path), \
+                 patch.object(mod, "OAUTH_CLIENT_SECRETS_FILE", secrets_path), \
+                 patch("gsc_server.InstalledAppFlow") as mock_flow_cls:
+                mock_flow = MagicMock()
+                mock_flow.run_local_server.side_effect = Exception("browser closed")
+                mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+                result = await mod.reauthenticate()
+
+            self.assertIn("Error during reauthentication", result)
+            self.assertEqual(open(token_path).read(), '{"old": "token"}')
 
     async def test_returns_error_when_no_secrets_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:

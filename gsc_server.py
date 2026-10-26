@@ -1510,12 +1510,12 @@ Amin combines technical SEO knowledge with programming skills to create innovati
 async def reauthenticate() -> str:
     """
     Perform a logout and new login sequence.
-    Deletes the current OAuth token file and triggers the browser authentication flow.
+    Triggers the browser authentication flow and replaces the current OAuth token
+    only after the new sign-in succeeds.
     Useful when you need to switch to a different Google account.
     """
     try:
-        # Check first: without a client secrets file no new sign-in is possible,
-        # so the current token must not be deleted.
+        # Without a client secrets file no new sign-in is possible.
         if not os.path.exists(OAUTH_CLIENT_SECRETS_FILE):
             return (
                 "Error: OAuth client secrets file not found. "
@@ -1524,12 +1524,7 @@ async def reauthenticate() -> str:
                 "GSC_OAUTH_CLIENT_SECRETS_FILE environment variable."
             )
 
-        # Delete existing token to force re-authentication
-        if os.path.exists(TOKEN_FILE):
-            os.remove(TOKEN_FILE)
-            token_deleted = True
-        else:
-            token_deleted = False
+        had_token = os.path.exists(TOKEN_FILE)
 
         # Trigger new OAuth flow — opens a browser window on the local machine.
         # run_local_server() works on macOS even from an MCP subprocess because
@@ -1537,12 +1532,13 @@ async def reauthenticate() -> str:
         flow = InstalledAppFlow.from_client_secrets_file(OAUTH_CLIENT_SECRETS_FILE, SCOPES)
         creds = flow.run_local_server(port=0)
 
-        # Save the new credentials for future use
+        # Overwrite the old token only now: a closed browser or a failed sign-in
+        # above leaves the current session in place.
         _save_token(creds)
 
         msg = "Successfully authenticated with a new Google account."
-        if token_deleted:
-            msg = "Previous session deleted. " + msg
+        if had_token:
+            msg = "Previous session replaced. " + msg
         return msg
 
     except Exception as e:
